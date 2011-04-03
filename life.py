@@ -5,9 +5,11 @@ Created on Mon Feb 21 09:17:10 2011
 @author: Eric Burnett (ericburnett@gmail.com)
 """
 import copy
+import math
 import pygame
 from pygame.locals import *  # Gives names like K_DOWN for key presses.
 import sys
+import time
 
 numNodesConstructed=0
 numAlreadyInCache=0
@@ -28,11 +30,7 @@ class Node:
       assert se is 1 or se is 0
       pass
     else:
-      assert nw._level == level - 1
-      assert ne._level == level - 1
-      assert sw._level == level - 1
-      assert se._level == level - 1
-      pass
+      assert nw._level == ne._level == sw._level == se._level == level - 1
     self._nw = nw
     self._ne = ne
     self._sw = sw
@@ -90,7 +88,6 @@ class Node:
             id(self._se) == id(other._se))
   def __ne__(self, other):
     return not self.__eq__(other)
-
 
   @classmethod
   def Zero(cls, level,
@@ -158,6 +155,11 @@ class Node:
     return cls.CanonicalNode(nw._level, nw._se, ne._sw, sw._ne, se._nw)
 
   def _Forward(self, atLevel=None):
+    """Returns the inner core of this node, forward in time. The number of
+    generations will be 2^(atLevel-2), by calling _Forward twice at every level
+    <= atLevel, and once for higher levels. This causes the exponential speedup
+    to start at the specified level, being linear up till that point.
+    """
     if atLevel is None or atLevel > self._level:
       atLevel = self._level
 
@@ -221,6 +223,8 @@ class Node:
   def ForwardN(self, n):
     # Returns a Node pointer, representing these cells forward n generations.
     # It will automatically expand to be big enough to fit all cells.
+    # The most compact node centered at the appropriate location that contains
+    # all the cells is returned.
     atLevel = 2
     cur = self
     while n > 0:
@@ -235,6 +239,9 @@ class Node:
     return cur.Compact()
 
   def __str__(self):
+    # Simple string method for debugging purposes. Do not use for anything
+    # deeper than about 3 levels, or recursion will eat your computer (and it
+    # won't be all that useful).
     return str((self._level, str(self._nw), str(self._ne), str(self._sw),
                 str(self._se)))
 
@@ -268,6 +275,61 @@ class Node:
       assert False
       pass
 
+  @classmethod
+  def _OffsetBounds(cls, bounds, level, index):
+    """Returns the bounds offset to a particular quadrant, so the center of the
+    quadrant is still 0,0, along with the opposing offset for tracking purposes.
+    """
+    size = 2**level
+    assert size >= 4
+    quarter_size = size >> 2
+    if index == 0:
+      ret = (bounds[0]+quarter_size, bounds[1]+quarter_size,
+             bounds[2]-quarter_size, bounds[3]-quarter_size)
+      offset = (-quarter_size, quarter_size)
+    elif index == 1:
+      ret = (bounds[0]-quarter_size, bounds[1]-quarter_size,
+             bounds[2]-quarter_size, bounds[3]-quarter_size)
+      offset = (quarter_size, quarter_size)
+    elif index == 2:
+      ret = (bounds[0]+quarter_size, bounds[1]+quarter_size,
+             bounds[2]+quarter_size, bounds[3]+quarter_size)
+      offset = (-quarter_size, -quarter_size)
+    elif index == 3:
+      ret = (bounds[0]-quarter_size, bounds[1]-quarter_size,
+             bounds[2]+quarter_size, bounds[3]+quarter_size)
+      offset = (quarter_size, -quarter_size)
+    return (ret, offset)
+
+  def Draw(self, bounds, draw_func, offset=(0,0)):
+    """Draw the cells within this Node that fall within bounds. Before offset,
+    the cell upper-right of center is 0,0. The offsetted coordinates of 'on'
+    cells are passed to draw_func for the actual rendering.
+    """
+    if self.IsZero():
+      return
+
+    inner_size = 2**(self._level-1)
+    if (bounds[1] < -inner_size or bounds[0] >= inner_size or
+	bounds[3] < -inner_size or bounds[2] >= inner_size):
+      return
+
+    if self._level == 1:
+      if self._nw and bounds[0] <= -1 and bounds[3] >= 0:
+	draw_func(-1 + offset[0], 0 + offset[1])
+      if self._ne and bounds[1] >= 0 and bounds[3] >= 0:
+	draw_func(0 + offset[0], 0 + offset[1])
+      if self._sw and bounds[0] <= -1 and bounds[2] <= -1:
+	draw_func(-1 + offset[0], -1 + offset[1])
+      if self._se and bounds[1] >= 0 and bounds[2] <= -1:
+	draw_func(0 + offset[0], -1 + offset[1])
+    else:
+      directions = self._nw, self._ne, self._sw, self._se
+      for i in range(4):
+	new_bounds, new_offset = Node._OffsetBounds(bounds, self._level, i)
+	self.Raw(i).Draw(new_bounds, draw_func,
+                         (offset[0]+new_offset[0], offset[1]+new_offset[1]))
+
 
 class World:
   """Manages the world of cells, infinite in size.
@@ -279,89 +341,139 @@ class World:
   def __init__(self, positions):
     """Initialize the world. Positions is a list of coordinates in the world
     that should be set to true, as (x,y) tuples."""
-    self._current = set(positions)
-    self._last = set()
+    self._root = World.FillNode(set(positions))
+    self._view_center = [0, 0]
+    self._view_size = 5  # How many pixels across is each cell?
     self._iteration_count = 0
-    self._min_x = 9999999
-    self._max_x = -9999999
-    self._min_y = 9999999
-    self._max_y = -9999999
-    self.UpdateBounds()
-    self._center_x = 0
-    self._center_y = 0
+
+  @classmethod
+  def FillNode(cls, positions):
+    """Turns a set of positions into a node hierarchy."""
+    if not positions:
+      return ([0,0], Node.Zero(1))
+
+    min_x = min(map(lambda a: a[0], positions))
+    max_x = max(map(lambda a: a[0], positions))
+    min_y = min(map(lambda a: a[1], positions))
+    max_y = max(map(lambda a: a[1], positions))
+    center_x = (max_x + min_x) // 2
+    center_y = (max_y + min_y) // 2
+    width = max_x - min_x + 1
+    height = max_y - min_y + 1
+    levels = int(math.log(max(width, height), 2)) + 1
+    node_size = 2**levels
+    bounds = (center_x - (node_size >> 1) + 1,
+              center_x + (node_size >> 1),
+              center_y - (node_size >> 1) + 1,
+              center_y + (node_size >> 1))
+    root = cls._NodeFromPositionsAndBounds(positions, levels, bounds)
+    return root
+
+  @classmethod
+  def _NodeFromPositionsAndBounds(cls, positions, level, bounds):
+    """Builds a Node at the specified level using the cells in positions that
+    fall within the given bounds.
+    """
+    inner_size = 2**(level-1)
+    assert bounds[0] + 2*inner_size - 1 == bounds[1]
+    assert bounds[2] + 2*inner_size - 1 == bounds[3]
+    if level == 1:
+      return Node.CanonicalNode(
+          1,
+          1 if (bounds[0], bounds[3]) in positions else 0,
+          1 if (bounds[1], bounds[3]) in positions else 0,
+          1 if (bounds[0], bounds[2]) in positions else 0,
+          1 if (bounds[1], bounds[2]) in positions else 0)
+    else:
+      return Node.CanonicalNode(
+          level,
+          cls._NodeFromPositionsAndBounds(positions, level-1,
+                                          cls._InnerBounds(bounds, 0)),
+          cls._NodeFromPositionsAndBounds(positions, level-1,
+                                          cls._InnerBounds(bounds, 1)),
+          cls._NodeFromPositionsAndBounds(positions, level-1,
+                                          cls._InnerBounds(bounds, 2)),
+          cls._NodeFromPositionsAndBounds(positions, level-1,
+                                          cls._InnerBounds(bounds, 3)))
+
+  @classmethod
+  def _InnerBounds(self, bounds, index):
+    """Helper method for NodeFromPositionsAndBounds - returns the quadrant of
+    the bounds that corresponds to the given index. So for bounds [3, 6, 10, 13]
+    the return values are 0:[3, 4, 12, 13], 1:[5, 6, 12, 13], 2:[3, 4, 10, 11],
+      3:[5, 6, 10, 11].
+    """
+    size = bounds[1] - bounds[0] + 1
+    assert bounds[2] + size - 1 == bounds[3]
+    assert size > 1
+    inner_size = size >> 1
+    if index == 0:
+      return (bounds[0], bounds[1]-inner_size,
+              bounds[2]+inner_size, bounds[3])
+    elif index == 1:
+      return (bounds[0]+inner_size, bounds[1],
+              bounds[2]+inner_size, bounds[3])
+    elif index == 2:
+      return (bounds[0], bounds[1]-inner_size,
+              bounds[2], bounds[3]-inner_size)
+    elif index == 3:
+      return (bounds[0]+inner_size, bounds[1],
+              bounds[2], bounds[3]-inner_size)
+    else:
+      assert False
 
   def Iterate(self, num_generations):
-    if len(self._current) == 0:
-      return
+    """Updates the state of the current world by n generations."""
+    self._root = self._root.ForwardN(num_generations)
+    self._iteration_count += num_generations
 
-    for i in range(num_generations):
-      self._iteration_count += 1
-      self._last = copy.copy(self._current)
-      candidates = self.Expand(self._current)
-      self._current = set()
-      for c in candidates:
-	if self.ValidNext(c, self._last):
-          self._current.add(c)
-    self.UpdateBounds()
+  def ShiftView(self, direction, step_size):
+    """Shifts the current view by a number of screen pixels."""
+    # view_center is in terms of cells, so shift by the corresponding number of
+    # cells instead.
+    cells = step_size // self._view_size
+    if direction == K_UP:
+      self._view_center[1] -= cells
+    elif direction == K_DOWN:
+      self._view_center[1] += cells
+    elif direction == K_RIGHT:
+      self._view_center[0] += cells
+    elif direction == K_LEFT:
+      self._view_center[0] -= cells
 
-  def UpdateBounds(self):
-    if len(self._current) == 0:
-      return
+  def ZoomOut(self):
+    self._view_size += 1
 
-    # Todo: ignore gliders in this
-    min_x = min(map(lambda a: a[0], self._current))
-    max_x = max(map(lambda a: a[0], self._current))
-    min_y = min(map(lambda a: a[1], self._current))
-    max_y = max(map(lambda a: a[1], self._current))
-    self._min_x = min(self._min_x, min_x)
-    self._max_x = max(self._max_x, max_x)
-    self._min_y = min(self._min_y, min_y)
-    self._max_y = max(self._max_y, max_y)
-
-  def Expand(self, positions):
-    """From a set of positions, expand to include all adjacent positions
-    not included."""
-    new_positions = set()
-    for p in positions:
-      new_positions.update(self.ExpandOne(p))
-    return new_positions
-
-  def ExpandOne(self, position):
-    """Expand one position to the set of positions in a 3x3 grid."""
-    x,y = position
-    return set([(a,b) for a in (x-1,x,x+1) for b in (y-1,y,y+1)])
-
-  def ValidNext(self, position, current_positions):
-    """Checks if a position should be live next round."""
-    neighbors = self.ExpandOne(position)
-    neighbors.remove(position)
-    neighbors.intersection_update(current_positions)
-
-    return (len(neighbors) == 3 or
-            (len(neighbors) == 2 and position in current_positions))
+  def ZoomIn(self):
+    self._view_size = max(1, self._view_size - 1)
 
   def Draw(self, screen_width, screen_height, screen):
-    min_dimension = 50
-    width = self._max_x - self._min_x + 1
-    height = self._max_y - self._min_y + 1
-    center_x = (self._min_x + self._max_x) // 2
-    center_y = (self._min_y + self._max_y) // 2
-    # Artifically expand maximums so we get less bouncing around in the
-    # early game
-    if width < min_dimension or height < min_dimension:
-      self._min_x = min(self._min_x, center_x - min_dimension // 2)
-      self._max_x = max(self._max_x, center_x + min_dimension // 2)
-      self._min_y = min(self._min_y, center_y - min_dimension // 2)
-      self._max_y = max(self._max_y, center_y + min_dimension // 2)
+    """Draws the current world to the screen. Uses self._view_center and
+    self._view_size to specify the location and zoom level.
+    """
+    # + 2 for rounding here and the shift following
+    view_width = screen_width // self._view_size + 2
+    view_height = screen_height // self._view_size + 2
+    view_bounds = (self._view_center[0] - (view_width // 2),
+                   self._view_center[0] + (view_width // 2),
+                   self._view_center[1] - (view_height // 2),
+                   self._view_center[1] + (view_height // 2))
+    def ToScreenSpace(x, y):
+      """Helper method to convert a Node coordinate into a screen Rect."""
+      pixels = self._view_size
+      x = x - self._view_center[0]
+      y = y - self._view_center[1]
+      return pygame.Rect((screen_width // 2 + x*pixels,
+                          screen_height // 2 + y*pixels,
+                          pixels, pixels))
+    def DrawCell(x, y):
+      """Helper method to draw a cell in Node coordinates to the screen."""
+      rect = ToScreenSpace(x, y)
+      screen.fill((0,0,0), rect)
 
-    pixels = max(min(screen_width // (width+1), screen_height // (height+1)),
-                 1)
-
-    for (x,y) in self._current:
-      box = pygame.Rect((screen_width // 2 + (x - center_x)*pixels,
-                         screen_height // 2 + (y - center_y)*pixels),
-			(pixels, pixels))
-      screen.fill((0,0,0), box)
+    # The bounds passed in assume the Node is rooted at 0,0. DrawCell will take
+    # care of translating back to screen space and applying the view offsets.
+    self._root.Draw(view_bounds, DrawCell)
 
 
 class Game:
@@ -373,7 +485,11 @@ class Game:
     self._clock = pygame.time.Clock()
     # How many ticks left until we iterate?
     self._ticks_per_update = 16
+    # When we're iterating once per frame we can step more than one generation
+    # (for running the iterations faster than our render loop).
     self._generations_per_update = 1
+    # How long until the next draw? Started high to introduce a pause when the
+    # program starts before the iterations kick off.
     self._ticks_till_next = 90
     self._paused = False
     # World to iterate.
@@ -384,24 +500,39 @@ class Game:
     if event.type == pygame.QUIT:
       sys.exit()
     elif event.type == pygame.KEYDOWN:
-      if event.key == K_DOWN:
+      if (event.key == K_DOWN or event.key == K_UP or
+          event.key == K_LEFT or event.key == K_RIGHT):
+	# Pan.
+        self._world.ShiftView(event.key, max(self._width, self._height) // 10)
+      elif event.key == K_MINUS or event.key == K_KP_MINUS:
+	# Slow down.
 	if (self._generations_per_update > 1):
           self._generations_per_update >>= 1
 	else:
           self._ticks_per_update <<= 1
-      elif event.key == K_UP:
+      elif event.key == K_EQUALS or event.key == K_KP_PLUS:
+	# Speed up.
 	if self._ticks_per_update > 1:
           self._ticks_per_update >>= 1
 	else:
           self._generations_per_update <<= 1
       elif event.key == K_SPACE:
+	# Pause.
 	self._paused = not self._paused
+      elif event.key == K_PAGEDOWN:
+	# Zoom out.
+	self._world.ZoomOut()
+      elif event.key == K_PAGEUP:
+	# Zoom in.
+	self._world.ZoomIn()
       elif event.key == K_q and (pygame.key.get_mods() & KMOD_CTRL):
+	# Quit.
 	sys.exit()
 
   def Draw(self):
     self._screen.fill((255,255,255))  # White
     self._world.Draw(self._width, self._height, self._screen)
+    pygame.display.flip()
 
   def Tick(self):
     if self._paused:
@@ -427,21 +558,24 @@ class Game:
       # Re-draw the screen
       self.Draw()
 
-      # Switch the current screen image for the one we just prepared.
-      pygame.display.flip()
-
 
 def ParseFile(name):
+  # Load a file. We support pretty lax syntax; ! or # start a comment, . on a
+  # line is a dead cell, anything else is live. Line lengths do not need to
+  # match. Empty lines are ignored. This can load all the .cells or .lif files
+  # I've tried.
   with open(name) as f:
     result = []
 
     row = 0
     for line in f:
-      if not line or line[0] == '!':
+      if not line or line[0] == '!' or line[0] == '#':
 	continue
 
       col = 0
       for c in line:
+	if c == '\r' or c == '\n':
+          break
 	if c != '.':
           result.append((row,col))
         col += 1
@@ -451,7 +585,7 @@ def ParseFile(name):
 
 def main():
   pygame.init()
-  size = (800, 800)
+  size = (1700, 1000)
 
   if len(sys.argv) > 1:
     initial_state = ParseFile(sys.argv[1])
