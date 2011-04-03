@@ -10,6 +10,13 @@ need appropriate headers stuck on.
 import sys
 from life import *
 
+def TestNoNodeConstructor():
+  try:
+    n = Node(1, 1, 1, 1, 1)
+  except UsageError, e:
+    return True
+  else:
+    assert "Constructor should have thrown!"
 
 def BasicTests():
   box = Node.CanonicalNode(1, 1, 1, 1, 1)
@@ -76,7 +83,11 @@ def TestBlinker():
 
 
 if __name__ == "__main__":
-  if BasicTests() and TestFillNode() and TestInnerBounds() and TestBlinker():
+  if (TestNoNodeConstructor() and
+      BasicTests() and
+      TestFillNode() and
+      TestInnerBounds() and
+      TestBlinker()):
     print "All Tests Passed"
     sys.exit(0)
   else:

@@ -18,10 +18,18 @@ numAlreadyInCache=0
 numNodeObjectsSaved=0
 spare_node=None
 
+class UsageError(RuntimeError):
+  pass
+
 class Node:
   # [ns][ew] are Node pointers for level > 1
   # [ns][ew] are [0|1] if level == 1
-  def __init__(self, level, nw, ne, sw, se):
+  def __init__(self, level, nw, ne, sw, se, really_use_constructor=False):
+    if not really_use_constructor:
+      raise UsageError("You should call Node.CanonicalNode rather than the "
+                       "constructor directly. This breaks assumptions used "
+                       "throughout the class and will slow down execution "
+                       "enormously.")
     global numNodesConstructed
     numNodesConstructed += 1
     self._level = level
@@ -42,7 +50,8 @@ class Node:
     self._hash = None
 
   def Canonical(self, cache_dont_touch={}):
-    # Returns the canonical variant of a node, hopefully with a cached center.
+    """Returns the canonical variant of a node, hopefully with a cached center.
+    """
     cache = cache_dont_touch
     global numAlreadyInCache
     if self not in cache:
@@ -56,6 +65,8 @@ class Node:
 
   @classmethod
   def CanonicalNode(cls, level, nw, ne, sw, se):
+    """Returns a canonical version of a new node. Should always be used, never
+    the base constructor."""
     global spare_node
     global numNodeObjectsSaved
     if spare_node is not None:
@@ -66,7 +77,7 @@ class Node:
       spare_node._se = se
       spare_node._hash = None
     else:
-      spare_node = Node(level, nw, ne, sw, se)
+      spare_node = Node(level, nw, ne, sw, se, really_use_constructor=True)
     canonical = spare_node.Canonical()
     if id(spare_node) == id(canonical):
       spare_node = None
@@ -81,7 +92,7 @@ class Node:
     return self._hash
 
   def __eq__(self, other):
-    # Are two nodes equal? Doesn't take caching _next into account.
+    """Are two nodes equal? Doesn't take caching _next into account."""
     if id(self) == id(other):
       return True
     return (id(self._nw) == id(other._nw) and
@@ -94,7 +105,7 @@ class Node:
   @classmethod
   def Zero(cls, level,
            cache_dont_touch=[]):
-    # Returns a node tree of all zeroes at the specified level.
+    """Returns a node tree of all zeroes at the specified level."""
     cache = cache_dont_touch
 
     if level == 0:
@@ -118,7 +129,7 @@ class Node:
     return zero == self
 
   def Expand(self):
-    # Returns a node one level deeper, with the center being this node.
+    """Returns a node one level deeper, with the center being this node."""
     zero = Node.Zero(self._level - 1)
     nw = self.CanonicalNode(self._level, nw=zero, ne=zero, sw=zero, se=self._nw)
     ne = self.CanonicalNode(self._level, nw=zero, ne=zero, sw=self._ne, se=zero)
@@ -127,7 +138,9 @@ class Node:
     return self.CanonicalNode(self._level + 1, nw=nw, ne=ne, sw=sw, se=se)
 
   def Compact(self):
-    # Returns the smallest node (level >= 1) that will contain all the cells.
+    """Returns the smallest node (level >= 1) that will contain all the cells
+    (without shifting the center).
+    """
     if self._level == 1:
       return self
     cur = self
@@ -157,16 +170,14 @@ class Node:
     return cls.CanonicalNode(nw._level, nw._se, ne._sw, sw._ne, se._nw)
 
   def _Forward(self, atLevel=None):
-    """Returns the inner core of this node, forward in time. The number of
-    generations will be 2^(atLevel-2), by calling _Forward twice at every level
-    <= atLevel, and once for higher levels. This causes the exponential speedup
-    to start at the specified level, being linear up till that point.
+    """Returns the inner 2^(level-1) x 2^(level-1) core of this node, forward in
+    time. The number of generations will be 2^(atLevel-2), by calling _Forward
+    twice at every level <= atLevel, and once for higher levels. This causes the
+    exponential speedup to start at the specified level, being linear up till
+    that point.
     """
     if atLevel is None or atLevel > self._level:
       atLevel = self._level
-
-    # Returns a Node pointer, representing the center
-    # 2^(level-1) x 2^(level-1) cells forward 2^(level-2) generations.
     assert self._level > 1
     if self._next and self._nextLevel != atLevel:
       # Wipe the cache for now.
@@ -223,10 +234,11 @@ class Node:
       return self._next
 
   def ForwardN(self, n):
-    # Returns a Node pointer, representing these cells forward n generations.
-    # It will automatically expand to be big enough to fit all cells.
-    # The most compact node centered at the appropriate location that contains
-    # all the cells is returned.
+    """Returns a Node pointer, representing these cells forward n generations.
+    It will automatically expand to be big enough to fit all cells.
+    The most compact node centered at the appropriate location that contains
+    all the cells is returned.
+    """
     atLevel = 2
     cur = self
     while n > 0:
@@ -241,9 +253,10 @@ class Node:
     return cur.Compact()
 
   def __str__(self):
-    # Simple string method for debugging purposes. Do not use for anything
-    # deeper than about 3 levels, or recursion will eat your computer (and it
-    # won't be all that useful).
+    """Simple string method for debugging purposes. Do not use for anything
+    deeper than about 4 levels, or recursion will eat your computer (and it
+    won't be all that useful).
+    """
     return str((self._level, str(self._nw), str(self._ne), str(self._sw),
                 str(self._se)))
 
@@ -497,8 +510,8 @@ class Game:
     # World to iterate.
     self._world = world
 
-  # Handle a single 'event' - like a key press, mouse click, etc.
   def ProcessEvent(self, event):
+    """Handle a single 'event' - like a key press, mouse click, etc."""
     if event.type == pygame.QUIT:
       sys.exit()
     elif event.type == pygame.KEYDOWN:
@@ -557,15 +570,16 @@ class Game:
       self._clock.tick(30)
       self.Tick()
 
-      # Re-draw the screen
+      # Re-draw the screen.
       self.Draw()
 
 
 def ParseFile(name):
-  # Load a file. We support pretty lax syntax; ! or # start a comment, . on a
-  # line is a dead cell, anything else is live. Line lengths do not need to
-  # match. Empty lines are ignored. This can load all the .cells or .lif files
-  # I've tried.
+  """Load a file. We support pretty lax syntax; ! or # start a comment, . on a
+  line is a dead cell, anything else is live. Line lengths do not need to
+  match. Empty lines are ignored. This can load all the .cells or .lif files
+  I've tried.
+  """
   with open(name) as f:
     result = []
 
@@ -592,14 +606,6 @@ def main():
   if len(sys.argv) > 1:
     initial_state = ParseFile(sys.argv[1])
   else:
-    # Blinker
-    # initial_state = [(0,-1),(0,0),(0,1)]
-    # R-pentomino
-    # initial_state = [(-1,0), (0,-1), (0,0), (0,1), (1, -1)]
-    # Diehard
-    # initial_state = [(0,0), (1,0), (1,1), (5,1), (6,-1), (6,1), (7,1)]
-    # Acorn
-    # initial_state = [(0,1), (1,-1), (1,1), (3,0), (4,1), (5,1), (6,1)]
     # Infinite zig-zag
     initial_state = [(-2,-2), (-2,-1), (-2,2), (-1,-2), (-1,1), (0,-2), (0,1),
                      (0,2), (1,0), (2,-2), (2,0), (2,1), (2,2)]
