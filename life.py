@@ -13,17 +13,63 @@ from pygame.locals import *  # Gives names like K_DOWN for key presses.
 import sys
 import time
 
+# Global variables for tracking various counts.
 numNodesConstructed=0
 numAlreadyInCache=0
 numNodeObjectsSaved=0
+
+# Global cache for a spare node, to reduce object churn when looking up
+# canonical nodes.
 spare_node=None
 
 class UsageError(RuntimeError):
   pass
 
+################################################################################
 class Node:
-  # [ns][ew] are Node pointers for level > 1
-  # [ns][ew] are [0|1] if level == 1
+  """A Node represents a square 2^N x 2^N cluster of cells.
+
+  The Node class is based on the description of the HashLife algorithm found
+  at http://drdobbs.com/high-performance-computing/184406478. It is a hash tree
+  with agressive caching and de-duplication. In particular:
+  * Nodes are defined recursively, with _nw, _ne, _sw, and _se being Nodes
+    representing the 2^(N-1) x 2^(N-1) cells in a particular corner ([0|1] at
+    the leaves).
+  * Nodes are immutable. Once a Node is returned from Node.CanonicalNode(), the
+    cells represented are guaranteed not to change.
+  * Nodes are unique. They are constructed in such a way that no two Node
+    objects can represent the same configuration of cells. In particular, this
+    means that Nodes can be compared by equality by doing id(a)==id(b). This
+    means that most node hierarchies take far less than 2^(2N) space to store.
+  * One key operation on a Node is to return the inner core 2^(N-1) x 2^(N-1)
+    cells forward a number of generations (usually 2^(N-2)). This is cached
+    wherever possible, and, along with identical nodes being shared due to their
+    uniqueness, means calculating the future inner core of a Node is usually far
+    cheaper than the worst case 2^(2N) operation.
+    """
+  @classmethod
+  def CanonicalNode(cls, level, nw, ne, sw, se):
+    """Returns a canonical version of a new node. Should always be used, never
+    the base constructor."""
+    global spare_node
+    global numNodeObjectsSaved
+    if spare_node is not None:
+      spare_node._level = level
+      spare_node._nw = nw
+      spare_node._ne = ne
+      spare_node._sw = sw
+      spare_node._se = se
+      assert spare_node._next is None
+      assert spare_node._nextLevel is None
+    else:
+      spare_node = Node(level, nw, ne, sw, se, really_use_constructor=True)
+    canonical = spare_node.Canonical()
+    if id(spare_node) == id(canonical):
+      spare_node = None
+    else:
+      numNodeObjectsSaved += 1
+    return canonical
+
   def __init__(self, level, nw, ne, sw, se, really_use_constructor=False):
     if not really_use_constructor:
       raise UsageError("You should call Node.CanonicalNode rather than the "
@@ -41,13 +87,19 @@ class Node:
       pass
     else:
       assert nw._level == ne._level == sw._level == se._level == level - 1
+      pass
+
+    # Recursive sub-nodes:
     self._nw = nw
     self._ne = ne
     self._sw = sw
     self._se = se
+
+    # Cached values. _next and _nextLevel are the cached inner core and the
+    # level at which exponential speedups were started (see Forward() for more
+    # information about the level).
     self._next = None
     self._nextLevel = None
-    self._hash = None
 
   def Canonical(self, cache_dont_touch={}):
     """Returns the canonical variant of a node, hopefully with a cached center.
@@ -57,39 +109,17 @@ class Node:
     if self not in cache:
       cache[self] = self
     if id(cache[self]) != id(self):
-      numAlreadyInCache+= 1
+      numAlreadyInCache += 1
     return cache[self]
 
   def IsCanonical(self):
     return id(self) == id(self.Canonical())
 
-  @classmethod
-  def CanonicalNode(cls, level, nw, ne, sw, se):
-    """Returns a canonical version of a new node. Should always be used, never
-    the base constructor."""
-    global spare_node
-    global numNodeObjectsSaved
-    if spare_node is not None:
-      spare_node._level = level
-      spare_node._nw = nw
-      spare_node._ne = ne
-      spare_node._sw = sw
-      spare_node._se = se
-      spare_node._hash = None
-    else:
-      spare_node = Node(level, nw, ne, sw, se, really_use_constructor=True)
-    canonical = spare_node.Canonical()
-    if id(spare_node) == id(canonical):
-      spare_node = None
-    else:
-      numNodeObjectsSaved += 1
-    return canonical
-
   def __hash__(self):
     # Hash is dependent on cells only, not e.g. _next.
-    if not self._hash:
-      self._hash = hash((self._level, self._nw, self._ne, self._sw, self._se))
-    return self._hash
+    # Required for Canonical(), so cannot be simply the id of the current
+    # object (which would otherwise work).
+    return hash((id(self._nw), id(self._ne), id(self._sw), id(self._se)))
 
   def __eq__(self, other):
     """Are two nodes equal? Doesn't take caching _next into account."""
@@ -146,14 +176,13 @@ class Node:
     cur = self
     zero = Node.Zero(cur._level - 2)
     while (
+	cur._level >= 2 and
         cur._nw._nw == zero and cur._nw._ne == zero and cur._nw._sw == zero and
         cur._ne._nw == zero and cur._ne._ne == zero and cur._ne._se == zero and
         cur._sw._nw == zero and cur._sw._sw == zero and cur._sw._se == zero and
         cur._se._ne == zero and cur._se._sw == zero and cur._se._se == zero):
       cur = self.CanonicalNode(cur._level - 1, cur._nw._se, cur._ne._sw, cur._sw._ne,
                  cur._se._nw)
-      if cur._level == 1:
-        break
       zero = Node.Zero(cur._level - 2)
     return cur
 
@@ -253,9 +282,7 @@ class Node:
     return cur.Compact()
 
   def __str__(self):
-    """Simple string method for debugging purposes. Do not use for anything
-    deeper than about 4 levels, or recursion will eat your computer (and it
-    won't be all that useful).
+    """Simple string method for debugging purposes.
     """
     return str((self._level, str(self._nw), str(self._ne), str(self._sw),
                 str(self._se)))
@@ -292,8 +319,9 @@ class Node:
 
   @classmethod
   def _OffsetBounds(cls, bounds, level, index):
-    """Returns the bounds offset to a particular quadrant, so the center of the
-    quadrant is still 0,0, along with the opposing offset for tracking purposes.
+    """Returns the input bounds offset to a particular quadrant (i.e. so the
+    center of the new quadrant is still considered (0,0)), along with the
+    opposing offset for tracking purposes.
     """
     size = 2**level
     assert size >= 4
@@ -346,6 +374,7 @@ class Node:
                          (offset[0]+new_offset[0], offset[1]+new_offset[1]))
 
 
+################################################################################
 class World:
   """Manages the world of cells, infinite in size.
 
@@ -436,6 +465,7 @@ class World:
               bounds[2], bounds[3]-inner_size)
     else:
       assert False
+      pass
 
   def Iterate(self, num_generations):
     """Updates the state of the current world by n generations."""
@@ -457,16 +487,16 @@ class World:
       self._view_center[0] -= cells
 
   def ZoomOut(self):
-    self._view_size += 1
+    self._view_size = max(1, self._view_size - 1)
 
   def ZoomIn(self):
-    self._view_size = max(1, self._view_size - 1)
+    self._view_size += 1
 
   def Draw(self, screen_width, screen_height, screen):
     """Draws the current world to the screen. Uses self._view_center and
     self._view_size to specify the location and zoom level.
     """
-    # + 2 for rounding here and the shift following
+    # + 2 for rounding here and the // 2 that follows.
     view_width = screen_width // self._view_size + 2
     view_height = screen_height // self._view_size + 2
     view_bounds = (self._view_center[0] - (view_width // 2),
@@ -491,6 +521,7 @@ class World:
     self._root.Draw(view_bounds, DrawCell)
 
 
+################################################################################
 class Game:
   def __init__(self, size, world):
     # Width and height of the main screen.
@@ -518,7 +549,7 @@ class Game:
       if (event.key == K_DOWN or event.key == K_UP or
           event.key == K_LEFT or event.key == K_RIGHT):
 	# Pan.
-        self._world.ShiftView(event.key, max(self._width, self._height) // 10)
+        self._world.ShiftView(event.key, max(self._width, self._height) // 20)
       elif event.key == K_MINUS or event.key == K_KP_MINUS:
 	# Slow down.
 	if (self._generations_per_update > 1):
@@ -535,11 +566,11 @@ class Game:
 	# Pause.
 	self._paused = not self._paused
       elif event.key == K_PAGEDOWN:
-	# Zoom out.
-	self._world.ZoomOut()
-      elif event.key == K_PAGEUP:
 	# Zoom in.
 	self._world.ZoomIn()
+      elif event.key == K_PAGEUP:
+	# Zoom out.
+	self._world.ZoomOut()
       elif event.key == K_q and (pygame.key.get_mods() & KMOD_CTRL):
 	# Quit.
 	sys.exit()
@@ -601,7 +632,8 @@ def ParseFile(name):
 
 def main():
   pygame.init()
-  size = (1700, 1000)
+  pygame.key.set_repeat(150, 50)
+  size = (1200, 1000)
 
   if len(sys.argv) > 1:
     initial_state = ParseFile(sys.argv[1])

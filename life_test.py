@@ -81,13 +81,21 @@ def TestBlinker():
   assert b_lots == b_1
   return True
 
+def TestPerformance():
+  initial_state = [(-2,-2), (-2,-1), (-2,2), (-1,-2), (-1,1), (0,-2), (0,1),
+                     (0,2), (1,0), (2,-2), (2,0), (2,1), (2,2)]
+  n = World.FillNode(initial_state)
+  n.ForwardN(1000000)
+  return True
+
 
 if __name__ == "__main__":
   if (TestNoNodeConstructor() and
       BasicTests() and
       TestFillNode() and
       TestInnerBounds() and
-      TestBlinker()):
+      TestBlinker() and
+      TestPerformance()):
     print "All Tests Passed"
     sys.exit(0)
   else:
