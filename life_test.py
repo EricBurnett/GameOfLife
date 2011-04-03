@@ -3,6 +3,8 @@
 Created on Sat Apr 2 14:05:10 2011
 
 @author: Eric Burnett (ericburnett@gmail.com)
+Released under the LGPL (or most other licenses on demand) - contact me if you
+need appropriate headers stuck on.
 """
 
 import sys

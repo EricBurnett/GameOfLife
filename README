@@ -1,0 +1,21 @@
+The Game of Life
+================
+Rendering engine for watching Life patterns evolve, created with Python 2.6 and
+PyGame.
+
+* Implements the HashLife algorithm, so patterns can be viewed at super-linear
+speeds with moderate requirements.
+* Can load basic .lif and .cells files, for easy use.
+
+Controls:
+--------
+Up/Down/Left/Right: Pan the viewport
++/-: Speed up or slow down the rate of evolution
+PageUp/PageDown: Zoom in/out
+
+
+
+
+Game of Life, copyright Eric Burnett, 2011.
+All code available under the LGPL (or most other licenses you might want).
+Contact me if you need me to stuff on appropriate headers.
