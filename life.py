@@ -608,8 +608,8 @@ class Game:
 def ParseFile(name):
   """Load a file. We support pretty lax syntax; ! or # start a comment, . on a
   line is a dead cell, anything else is live. Line lengths do not need to
-  match. Empty lines are ignored. This can load all the .cells or .lif files
-  I've tried.
+  match. This can load basic .cells and .lif files, although nothing complicated
+  is supported.
   """
   with open(name) as f:
     result = []
