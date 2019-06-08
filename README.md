@@ -22,11 +22,15 @@ python2.6 life.py
 ## Controls
 
 Up/Down/Left/Right: Pan the viewport
+
 +/-: Speed up or slow down the rate of evolution
+
 PageDown/PageUp: Zoom in/out
 
 ## Credits
 
 Game of Life, copyright Eric Burnett, 2011.
+
 All code available under the LGPL (or most other licenses you might want).
+
 Contact me if you need me to stuff on appropriate headers.
