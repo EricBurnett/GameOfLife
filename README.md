@@ -23,6 +23,8 @@ python2.6 life.py
 
 Up/Down/Left/Right: Pan the viewport
 
+⬆️ ⬇️ ⬅️ ➡️ 
+
 +/-: Speed up or slow down the rate of evolution
 
 PageDown/PageUp: Zoom in/out
