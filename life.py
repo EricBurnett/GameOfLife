@@ -176,7 +176,7 @@ class Node:
     cur = self
     zero = Node.Zero(cur._level - 2)
     while (
-	cur._level >= 2 and
+        cur._level >= 2 and
         cur._nw._nw == zero and cur._nw._ne == zero and cur._nw._sw == zero and
         cur._ne._nw == zero and cur._ne._ne == zero and cur._ne._se == zero and
         cur._sw._nw == zero and cur._sw._sw == zero and cur._sw._se == zero and
@@ -274,8 +274,8 @@ class Node:
       if n & 1:
         while cur._level < atLevel - 2:
           cur = cur.Expand()
-	# Expand twice extra to ensure the expanded cells will fit within the
-	# center forward one.
+        # Expand twice extra to ensure the expanded cells will fit within the
+        # center forward one.
         cur = cur.Expand().Expand()._Forward(atLevel=atLevel)
       n >>= 1
       atLevel += 1
@@ -354,23 +354,23 @@ class Node:
 
     inner_size = 2**(self._level-1)
     if (bounds[1] < -inner_size or bounds[0] >= inner_size or
-	bounds[3] < -inner_size or bounds[2] >= inner_size):
+        bounds[3] < -inner_size or bounds[2] >= inner_size):
       return
 
     if self._level == 1:
       if self._nw and bounds[0] <= -1 and bounds[3] >= 0:
-	draw_func(-1 + offset[0], 0 + offset[1])
+        draw_func(-1 + offset[0], 0 + offset[1])
       if self._ne and bounds[1] >= 0 and bounds[3] >= 0:
-	draw_func(0 + offset[0], 0 + offset[1])
+        draw_func(0 + offset[0], 0 + offset[1])
       if self._sw and bounds[0] <= -1 and bounds[2] <= -1:
-	draw_func(-1 + offset[0], -1 + offset[1])
+        draw_func(-1 + offset[0], -1 + offset[1])
       if self._se and bounds[1] >= 0 and bounds[2] <= -1:
-	draw_func(0 + offset[0], -1 + offset[1])
+        draw_func(0 + offset[0], -1 + offset[1])
     else:
       directions = self._nw, self._ne, self._sw, self._se
       for i in range(4):
-	new_bounds, new_offset = Node._OffsetBounds(bounds, self._level, i)
-	self.Raw(i).Draw(new_bounds, draw_func,
+        new_bounds, new_offset = Node._OffsetBounds(bounds, self._level, i)
+        self.Raw(i).Draw(new_bounds, draw_func,
                          (offset[0]+new_offset[0], offset[1]+new_offset[1]))
 
 
@@ -548,32 +548,32 @@ class Game:
     elif event.type == pygame.KEYDOWN:
       if (event.key == K_DOWN or event.key == K_UP or
           event.key == K_LEFT or event.key == K_RIGHT):
-	# Pan.
+        # Pan.
         self._world.ShiftView(event.key, max(self._width, self._height) // 20)
       elif event.key == K_MINUS or event.key == K_KP_MINUS:
-	# Slow down.
-	if (self._generations_per_update > 1):
+        # Slow down.
+        if (self._generations_per_update > 1):
           self._generations_per_update >>= 1
-	else:
+        else:
           self._ticks_per_update <<= 1
       elif event.key == K_EQUALS or event.key == K_KP_PLUS:
-	# Speed up.
-	if self._ticks_per_update > 1:
+        # Speed up.
+        if self._ticks_per_update > 1:
           self._ticks_per_update >>= 1
-	else:
+        else:
           self._generations_per_update <<= 1
       elif event.key == K_SPACE:
-	# Pause.
-	self._paused = not self._paused
+        # Pause.
+        self._paused = not self._paused
       elif event.key == K_PAGEDOWN:
-	# Zoom in.
-	self._world.ZoomIn()
+        # Zoom in.
+        self._world.ZoomIn()
       elif event.key == K_PAGEUP:
-	# Zoom out.
-	self._world.ZoomOut()
+        # Zoom out.
+        self._world.ZoomOut()
       elif event.key == K_q and (pygame.key.get_mods() & KMOD_CTRL):
-	# Quit.
-	sys.exit()
+        # Quit.
+        sys.exit()
 
   def Draw(self):
     self._screen.fill((255,255,255))  # White
@@ -593,7 +593,7 @@ class Game:
     while True:
       # Process any pending events.
       for event in pygame.event.get():
-	self.ProcessEvent(event)
+        self.ProcessEvent(event)
 
       # Update anything that happens over time. The first call waits until
       # it has been a 30th of a second since the last tick, then the
@@ -617,13 +617,13 @@ def ParseFile(name):
     row = 0
     for line in f:
       if not line or line[0] == '!' or line[0] == '#':
-	continue
+        continue
 
       col = 0
       for c in line:
-	if c == '\r' or c == '\n':
+        if c == '\r' or c == '\n':
           break
-	if c != '.':
+        if c != '.':
           result.append((row,col))
         col += 1
       row -= 1
