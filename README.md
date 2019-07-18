@@ -14,7 +14,7 @@ speeds with moderate requirements.
 ## Installation
 1. Run the following commands :
 ```
-sudo git clone https://github.com/EricBurnett/GameOfLife.git
+git clone https://github.com/EricBurnett/GameOfLife.git
 cd GameOfLife
 python2.6 life.py
 ```
